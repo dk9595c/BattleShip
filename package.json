@@ -1,0 +1,13 @@
+{
+  "name": "battleship-server",
+  "version": "1.0.0",
+  "description": "Simple Battleship backend server using Node.js",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
