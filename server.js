@@ -86,9 +86,7 @@ function cleanupOldGames() {
 // Start the cleanup-up timer (runs every 5 minutes)
 setInterval(cleanupOldGames, 1000 * 60 * 5);
 
-
-// --- The Main Server ---
-
+//The main server
 const server = http.createServer((req, res) => {
   const { query } = url.parse(req.url, true);
   
