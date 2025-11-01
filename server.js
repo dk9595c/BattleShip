@@ -3,9 +3,7 @@ const url = require('url');
 const { randomUUID } = require('crypto');
 
 // This Map will store all active game sessions
-const activeGames = new Map();
-
-// --- PASTE YOUR FULL 'recrCode' ARRAY HERE ---
+const activeGames = new Map(); //
 
 let recrCode=[
 [-60,5,-62,4,-35,3,27,3,24,2],
@@ -1519,168 +1517,308 @@ let recrCode=[
 // Game sessions will be removed after 1 day of inactivity
 const GAME_TIMEOUT_MS = 1000 * 60 * 60 * 24; // 1 Day
 
-// ===========================================
-// === AI STRATEGY LOGIC (INTEGRATED) ===
-// ===========================================
+// =================================================
+// === AI STRATEGY (Full Probabilistic Algorithm) ===
+// =================================================
 
-// This is a 100-element array (0-99)
-// It's pre-calculated once and shared by all AI instances.
-let GLOBAL_HUNT_STACK = [];
+// AI Constants (from your provided file)
+const AI_CONST = {
+    TYPE_EMPTY: 0,
+    TYPE_MISS: 2,
+    TYPE_HIT: 3,
+    TYPE_SUNK: 4,
+    SHIP_SIZES: [5, 4, 3, 3, 2], // The player's fleet
+    PROB_WEIGHT: 5000, // High value to prioritize targeting
+    OPENINGS: [ // Opening book from your file
+        {'x': 7, 'y': 3, 'weight': 20}, {'x': 6, 'y': 2, 'weight': 20},
+        {'x': 3, 'y': 7, 'weight': 20}, {'x': 2, 'y': 6, 'weight': 20},
+        {'x': 6, 'y': 6, 'weight': 20}, {'x': 3, 'y': 3, 'weight': 20},
+        {'x': 5, 'y': 5, 'weight': 20}, {'x': 4, 'y': 4, 'weight': 20},
+        {'x': 0, 'y': 8, 'weight': 25}, {'x': 1, 'y': 9, 'weight': 30},
+        {'x': 8, 'y': 0, 'weight': 25}, {'x': 9, 'y': 1, 'weight': 30},
+        {'x': 9, 'y': 9, 'weight': 30}, {'x': 0, 'y': 0, 'weight': 30}
+    ]
+};
 
 /**
- * Creates the master heatmap and sorted hunt stack.
- * Runs ONLY ONCE when the server starts.
+ * A simplified "VirtualGrid" class for the AI to store its knowledge.
  */
-function createInitialHeatmap() {
-    console.log("AI: Generating initial heatmap...");
-    const heatmap = new Array(100).fill(0);
-    const shipSizes = [5, 4, 3, 3, 2];
-
-    const isValid = (sq) => sq >= 0 && sq < 100;
-
-    for (const size of shipSizes) {
-        // Horizontal placements
-        for (let r = 0; r < 10; r++) {
-            for (let c = 0; c <= 10 - size; c++) {
-                for (let i = 0; i < size; i++) {
-                    heatmap[r * 10 + c + i]++;
-                }
-            }
-        }
-        // Vertical placements
-        for (let c = 0; c < 10; c++) {
-            for (let r = 0; r <= 10 - size; r++) {
-                for (let i = 0; i < size; i++) {
-                    heatmap[(r + i) * 10 + c]++;
-                }
-            }
-        }
+class VirtualGrid {
+    constructor() {
+        this.cells = this.initGrid();
     }
-
-    // Create a "checkerboard" hunt list, sorted by heat
-    const sortedHeat = heatmap
-        .map((heat, square) => ({ square, heat }))
-        .filter(item => (item.square % 2) === (Math.floor(item.square / 10) % 2)) // Checkerboard
-        .sort((a, b) => a.heat - b.heat); // Sort from coldest to hottest
-
-    // GLOBAL_HUNT_STACK is now an array of square numbers, from hottest to coldest.
-    GLOBAL_HUNT_STACK = sortedHeat.map(item => item.square);
-    console.log("AI: Heatmap generated. Hunt stack ready.");
+    initGrid() {
+        const cells = [];
+        for (let x = 0; x < 10; x++) {
+            cells[x] = new Array(10).fill(AI_CONST.TYPE_EMPTY);
+        }
+        return cells;
+    }
 }
 
 /**
- * AI class to manage the state for a single game.
+ * A simplified "VirtualShip" class for the AI to run calculations.
  */
-class AI {
-    constructor() {
-        // Each AI gets its own *copy* of the hunt stack
-        this.huntStack = [...GLOBAL_HUNT_STACK];
-        this.targetQueue = []; // Squares to hit in "TARGET" mode
-        this.mode = 'HUNT';
-        this.firstHit = -1; // The first square we hit of a new ship
-        this.lastHit = -1; // The most recent hit
+class VirtualShip {
+    constructor(size, virtualGrid) {
+        this.shipLength = size;
+        this.virtualGrid = virtualGrid; // Reference to the AI's grid
+        this.sunk = false;
+        this.x = -1;
+        this.y = -1;
+        this.direction = 0; // 0 = Vertical, 1 = Horizontal
     }
 
-    /**
-     * The server calls this to get the AI's next guess.
-     * @returns {number} The square to guess (1-100)
-     */
-    getGuess() {
-        let guess = -1;
-        if (this.targetQueue.length > 0) {
-            // We are in TARGET mode, pop from the priority queue
-            guess = this.targetQueue.shift();
-        } else {
-            // We are in HUNT mode, pop from the heatmap stack
-            this.mode = 'HUNT';
-            if (this.huntStack.length > 0) {
-                guess = this.huntStack.pop();
-            } else {
-                // Failsafe: if heatmap is empty, guess randomly
-                guess = Math.floor(Math.random() * 100);
+    // A fast, inlined check from your provided file
+    isLegal(x, y, direction) {
+        if (direction === 0) { // Vertical
+            if (x + this.shipLength > 10) return false;
+            for (let i = 0; i < this.shipLength; i++) {
+                const cellType = this.virtualGrid.cells[x + i][y];
+                if (cellType === AI_CONST.TYPE_MISS || cellType === AI_CONST.TYPE_SUNK) {
+                    return false;
+                }
+            }
+        } else { // Horizontal
+            if (y + this.shipLength > 10) return false;
+            for (let i = 0; i < this.shipLength; i++) {
+                const cellType = this.virtualGrid.cells[x][y + i];
+                if (cellType === AI_CONST.TYPE_MISS || cellType === AI_CONST.TYPE_SUNK) {
+                    return false;
+                }
             }
         }
-        return guess + 1; // Convert from 0-99 to 1-100
+        return true;
+    }
+    
+    create(x, y, direction) {
+        this.x = x;
+        this.y = y;
+        this.direction = direction;
+    }
+
+    getAllShipCells() {
+        const cells = [];
+        for (let i = 0; i < this.shipLength; i++) {
+            if (this.direction === 0) { // Vertical
+                cells.push({ x: this.x + i, y: this.y });
+            } else { // Horizontal
+                cells.push({ x: this.x, y: this.y + i });
+            }
+        }
+        return cells;
+    }
+}
+
+/**
+ * The new, smarter AI class.
+ * This holds the logic for a *single* game.
+ */
+class AI {
+    constructor(game) {
+        this.game = game; // A reference to the parent game object
+        this.probGrid = this.initProbs();
+        
+        // Run the first calculation to populate the heatmap
+        this.recalculateProbs();
     }
 
     /**
-     * The server calls this to tell the AI the result of its last guess.
-     * @param {number} guess - The guess the AI just made (1-100)
-     * @param {string} result - "HIT", "MISS", or "SUNK"
+     * Gets the AI's next guess (1-100).
+     */
+    getGuess() {
+        let maxProbability = -1;
+        let maxProbCoords = { x: 0, y: 0 };
+        
+        // Add opening book weights
+        for (const cell of AI_CONST.OPENINGS) {
+            if (this.game.virtualGrid.cells[cell.x][cell.y] === AI_CONST.TYPE_EMPTY) {
+                this.probGrid[cell.x][cell.y] += cell.weight;
+            }
+        }
+
+        // Find the square with the highest probability
+        for (let r = 0; r < 10; r++) {
+            for (let c = 0; c < 10; c++) {
+                // Don't guess squares we've already hit
+                if (this.game.virtualGrid.cells[r][c] !== AI_CONST.TYPE_EMPTY) {
+                    this.probGrid[r][c] = 0;
+                }
+                
+                if (this.probGrid[r][c] > maxProbability) {
+                    maxProbability = this.probGrid[r][c];
+                    maxProbCoords = { x: r, y: c };
+                }
+            }
+        }
+        
+        // Failsafe in case all probabilities are 0
+        if (maxProbability <= 0) {
+            let rx, ry;
+            do {
+                rx = Math.floor(Math.random() * 10);
+                ry = Math.floor(Math.random() * 10);
+            } while (this.game.virtualGrid.cells[rx][ry] !== AI_CONST.TYPE_EMPTY);
+            maxProbCoords = { x: rx, y: ry };
+        }
+
+        this.game.lastAiGuess = (maxProbCoords.x * 10) + maxProbCoords.y + 1;
+        return this.game.lastAiGuess; // Convert to 1-100
+    }
+
+    /**
+     * Updates the AI's internal state with the result of its last guess.
+     * This is where the "no compromise" logic happens.
      */
     updateState(guess, result) {
-        const guessIdx = guess - 1; // Convert from 1-100 to 0-99
+        const guessIdx = guess - 1; // Convert to 0-99
+        const x = Math.floor(guessIdx / 10);
+        const y = guessIdx % 10;
 
         if (result === 'SUNK') {
-            this.mode = 'HUNT';
-            this.targetQueue = []; // Clear queue
-            this.firstHit = -1;
-            this.lastHit = -1;
+            this.game.virtualGrid.cells[x][y] = AI_CONST.TYPE_HIT; // Mark the hit
+            
+            // Find which ship was sunk (based on surrounding hits)
+            const sunkShip = this._findSunkShip(x, y);
+            
+            if (sunkShip) {
+                for (const cell of sunkShip.cells) {
+                    this.game.virtualGrid.cells[cell.x][cell.y] = AI_CONST.TYPE_SUNK;
+                }
+                // Remove this ship size from the AI's fleet
+                const shipIndex = this.game.virtualFleet.findIndex(ship => !ship.sunk && ship.shipLength === sunkShip.size);
+                if (shipIndex > -1) {
+                    this.game.virtualFleet[shipIndex].sunk = true;
+                }
+            }
+            
         } else if (result === 'HIT') {
-            this.mode = 'TARGET';
-            this.lastHit = guessIdx;
+            this.game.virtualGrid.cells[x][y] = AI_CONST.TYPE_HIT;
+            
+        } else { // "MISS"
+            this.game.virtualGrid.cells[x][y] = AI_CONST.TYPE_MISS;
+        }
 
-            if (this.firstHit === -1) {
-                // This is the first hit on this ship
-                this.firstHit = guessIdx;
-                this._addNeighborsToQueue(guessIdx);
-            } else {
-                // This is the second+ hit. We know the orientation.
-                this._pruneTargetQueue(guessIdx);
+        // --- THIS IS THE "NO COMPROMISE" ---
+        // Re-calculate the entire heatmap on EVERY guess, just like your file.
+        this.recalculateProbs();
+    }
+    
+    /**
+     * Re-calculates the entire probability heatmap.
+     * This is the "expensive" function from your file.
+     */
+    recalculateProbs() {
+        this.resetProbs();
+        let coords;
+        // Get all ships the AI thinks are still alive
+        const activeFleet = this.game.virtualFleet.filter(ship => !ship.sunk);
+
+        for (const ship of activeFleet) {
+            for (let r = 0; r < 10; r++) {
+                for (let c = 0; c < 10; c++) {
+                    // Check Vertical
+                    if (ship.isLegal(r, c, 0)) {
+                        ship.create(r, c, 0);
+                        coords = ship.getAllShipCells();
+                        if (this.passesThroughHitCell(coords)) {
+                            for (const cell of coords) {
+                                this.probGrid[cell.x][cell.y] += AI_CONST.PROB_WEIGHT * this.numHitCellsCovered(coords);
+                            }
+                        } else {
+                            for (const cell of coords) {
+                                this.probGrid[cell.x][cell.y]++;
+                            }
+                        }
+                    }
+                    // Check Horizontal
+                    if (ship.isLegal(r, c, 1)) {
+                        ship.create(r, c, 1);
+                        coords = ship.getAllShipCells();
+                        if (this.passesThroughHitCell(coords)) {
+                            for (const cell of coords) {
+                                this.probGrid[cell.x][cell.y] += AI_CONST.PROB_WEIGHT * this.numHitCellsCovered(coords);
+                            }
+                        } else {
+                            for (const cell of coords) {
+                                this.probGrid[cell.x][cell.y]++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Helper functions from your file ---
+    
+    initProbs() {
+        const grid = [];
+        for (let x = 0; x < 10; x++) {
+            grid[x] = new Array(10).fill(0);
+        }
+        return grid;
+    }
+    
+    resetProbs() {
+        for (let x = 0; x < 10; x++) {
+            for (let y = 0; y < 10; y++) {
+                this.probGrid[x][y] = 0;
             }
         }
     }
     
-    // --- Private Helper Methods ---
-
-    _addNeighborsToQueue(square) {
-        const neighbors = [];
-        const r = Math.floor(square / 10);
-        const c = square % 10;
-        
-        if (c > 0) neighbors.push(square - 1); // Left
-        if (c < 9) neighbors.push(square + 1); // Right
-        if (r > 0) neighbors.push(square - 10); // Up
-        if (r < 9) neighbors.push(square + 10); // Down
-        
-        // Add valid neighbors to the front of the queue
-        this.targetQueue.unshift(...neighbors);
+    passesThroughHitCell(shipCells) {
+        for (const cell of shipCells) {
+            if (this.game.virtualGrid.cells[cell.x][cell.y] === AI_CONST.TYPE_HIT) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    numHitCellsCovered(shipCells) {
+        let cells = 0;
+        for (const cell of shipCells) {
+            if (this.game.virtualGrid.cells[cell.x][cell.y] === AI_CONST.TYPE_HIT) {
+                cells++;
+            }
+        }
+        return cells;
     }
 
-    _pruneTargetQueue(hitSquare) {
-        const orientation = (this.firstHit % 10 === hitSquare % 10) ? 'VERTICAL' : 'HORIZONTAL';
+    // Helper to find all connected "HIT" squares to identify a sunk ship
+    _findSunkShip(x, y) {
+        const hits = [{x, y}];
+        const checked = new Set([`${x},${y}`]);
+        const queue = [{x, y}];
+        const vGrid = this.game.virtualGrid.cells;
         
-        // Clear any neighbors that don't match the new orientation
-        this.targetQueue = this.targetQueue.filter(sq => {
-            if (orientation === 'VERTICAL') {
-                return sq % 10 === hitSquare % 10; // Keep only squares in the same column
-            } else {
-                return Math.floor(sq / 10) === Math.floor(hitSquare / 10); // Keep only squares in the same row
+        while(queue.length > 0) {
+            const {x, y} = queue.shift();
+            const neighbors = [{x: x-1, y}, {x: x+1, y}, {x, y: y-1}, {x, y: y+1}];
+            
+            for(const n of neighbors) {
+                const key = `${n.x},${n.y}`;
+                if (n.x >= 0 && n.x < 10 && n.y >= 0 && n.y < 10 && !checked.has(key)) {
+                    checked.add(key);
+                    if(vGrid[n.x][n.y] === AI_CONST.TYPE_HIT) {
+                        hits.push(n);
+                        queue.push(n);
+                    }
+                }
             }
-        });
-
-        // Add the *next* square in the-line
-        let nextGuess = -1;
-        if (orientation === 'VERTICAL') {
-            nextGuess = (hitSquare > this.firstHit) ? hitSquare + 10 : hitSquare - 10;
-        } else {
-            nextGuess = (hitSquare > this.firstHit) ? hitSquare + 1 : hitSquare - 1;
         }
-        
-        if (nextGuess >= 0 && nextGuess < 100 && !this.targetQueue.includes(nextGuess)) {
-            this.targetQueue.unshift(nextGuess); // Add to front
-        }
+        return { cells: hits, size: hits.length };
     }
 }
 
 // ===========================================
-// === END OF AI STRATEGY LOGIC ===
+// === END OF AI LOGIC ===
 // ===========================================
 
-// Run the heatmap generator (once)
-createInitialHeatmap();
 
-// --- Helper Functions ---
+// --- Main Server Helper Functions ---
 
 function generateNewShipLayout() {
     const randomIndex = Math.floor(Math.random() * recrCode.length);
@@ -1706,15 +1844,12 @@ function checkHit(target, game, gameId) {
       const square = isVertical ? position + j * 10 : position + j;
       if (square === target) {
         game.playerHits.add(target);
-
         const shipIndex = i / 2;
         const ship = game.shipHealth[shipIndex];
-        
         ship.hits++;
         
         if (ship.hits === ship.size) {
           ship.isSunk = true;
-          // console.log(`Game ${gameId}: Player SUNK a ship...`); // Log removed
           return `SUNK_${ship.size}_${originalPosition}`;
         } else {
           return "HIT";
@@ -1727,9 +1862,6 @@ function checkHit(target, game, gameId) {
   return "MISS";
 }
 
-/**
- * Periodically runs to remove inactive game sessions (user leaves).
- */
 function cleanupOldGames() {
   const now = Date.now();
   let deletedCount = 0;
@@ -1744,7 +1876,6 @@ function cleanupOldGames() {
   }
 }
 
-// Start the cleanup-up timer (runs every 5 minutes)
 setInterval(cleanupOldGames, 1000 * 60 * 5);
 
 //The main server
@@ -1753,7 +1884,6 @@ const server = http.createServer((req, res) => {
   
   res.setHeader('Access-Control-Allow-Origin', '*');
   
-  // Uptime monitor ping (silent)
   if (req.method === 'HEAD' && req.url === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end();
@@ -1765,6 +1895,7 @@ const server = http.createServer((req, res) => {
     const gameId = randomUUID();
     const layout = generateNewShipLayout();
     
+    // Create the newGame object *first*
     const newGame = {
       shipLayout: layout,
       aiGuesses: new Set(),
@@ -1777,9 +1908,20 @@ const server = http.createServer((req, res) => {
         { size: layout[9], hits: 0, isSunk: false }
       ],
       playerHits: new Set(),
-      ai: new AI(), // Give this game its own AI instance
-      lastAiGuess: -1 // Store the AI's last guess
+      // AI properties
+      virtualGrid: new VirtualGrid(), // AI's knowledge of player's board
+      virtualFleet: AI_CONST.SHIP_SIZES.map(size => new VirtualShip(size, null)), // AI's list of player's ships
+      ai: null, // Will be set next
+      lastAiGuess: -1
     };
+    
+    // Set the virtual grid for each ship in the fleet
+    newGame.virtualFleet.forEach(ship => {
+        ship.virtualGrid = newGame.virtualGrid;
+    });
+    
+    // Now create the AI instance and pass the game object to it
+    newGame.ai = new AI(newGame);
     
     activeGames.set(gameId, newGame);
     console.log(`New game started: ${gameId}. Total games: ${activeGames.size}`);
@@ -1807,20 +1949,25 @@ const server = http.createServer((req, res) => {
         }
       }
 
+      // 2. Feed this result to the AI to update its internal state
+      //    (This is the "slow" step that runs on *every* request)
       if (game.lastAiGuess !== -1) {
           game.ai.updateState(game.lastAiGuess, aiGuessResult);
       }
       
+      // 3. Check the *player's* current guess
       const playerResult = checkHit(query.target, game, query.gameId);
       
+      // 4. Get the AI's *new* smart guess from the updated heatmap
       let aiGuess;
       do {
           aiGuess = game.ai.getGuess();
-      } while (game.aiGuesses.has(aiGuess));
+      } while (game.aiGuesses.has(aiGuess)); // Ensure we don't guess the same square twice
       
+      // 5. Add the AI's new guess to the game's "used" set
       game.aiGuesses.add(aiGuess);
-      game.lastAiGuess = aiGuess;
       
+      // 6. Send the response
       const response = `${playerResult},${aiGuess}`;
       
       // Game logs are removed for quiet operation
