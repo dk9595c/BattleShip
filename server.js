@@ -2,6 +2,10 @@ const http = require('http');
 const url = require('url');
 const { randomUUID } = require('crypto');
 
+// Add this line
+const GAME_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+
 // This Map will store all active game sessions
 const activeGames = new Map(); //
 
