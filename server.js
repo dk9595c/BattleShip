@@ -15,11 +15,11 @@ const prefixes = ["Admiral", "Captain", "Ghost", "Iron", "Deep", "Salty", "Cold"
 const roots = ["Hunter", "Wolf", "Gazer", "Dog", "Skipper", "Kraken", "Viper"];
 const countries = ["USA", "CAN", "UK", "IND", "GER", "JPN", "AUS", "FRA"];
 
-// Generate 1000 bots on server startup
-const allBots = [];
+// Generate 1000 players on server startup
+const allPlayers = [];
 for (let i = 0; i < 1000; i++) {
-    allBots.push({
-        id: `bot_${i}`,
+    allPlayers.push({
+        id: `player_${i}`,
         username: `${prefixes[i % prefixes.length]}${roots[i % roots.length]}_${i}`,
         country: countries[i % countries.length],
         rank: Math.random() > 0.8 ? "Admiral" : "Captain",
@@ -1995,21 +1995,20 @@ const server = http.createServer((req, res) => {
     }
 
     // === NEW ROUTE: LOBBY DATA (Homepage) ===
-    if (req.method === 'GET' && query.action === 'getLobbyData') {
-        // Shuffle the 1000 bots and pick 12 random ones
-        const shuffled = [...allBots].sort(() => 0.5 - Math.random());
-        const selectedBots = shuffled.slice(0, 12).map(bot => {
-            return {
-                ...bot,
-                // Replace dummyState with our new Beautiful SVG generator
-                svg: generateServerSideSVG()
-            };
-        });
+        if (req.method === 'GET' && query.action === 'getLobbyData') {
+            // Shuffle the 1000 players and pick 12 random ones
+            const shuffled = [...allPlayers].sort(() => 0.5 - Math.random());
+            const selectedPlayers = shuffled.slice(0, 12).map(player => {
+                return {
+                    ...player,
+                    svg: generateServerSideSVG()
+                };
+            });
 
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(selectedBots));
-        return;
-    }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(selectedPlayers));
+            return;
+        }
 
     // === ROUTE 1: NEW GAME (User Joins) ===
     else if (req.method === 'GET' && query.action === 'newGame') {
