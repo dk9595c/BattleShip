@@ -27,34 +27,117 @@ for (let i = 0; i < 1000; i++) {
     });
 }
 
-/**
- * Generates a Safari-compatible SVG snapshot of a game board to be used as an avatar.
- * Adapted from the client-side design in Homepage.html
- */
-function generateServerSideSVG(gameState) {
-    const gridSize = 10;
-    const cellSize = 100 / gridSize;
-    let cellsSVG = '';
+// --- HAIKEI AVATAR GENERATOR FUNCTIONS (Ported from Client) ---
+const rand = (min, max) => Math.random() * (max - min) + min;
+const randInt = (min, max) => Math.floor(rand(min, max));
+const randChoice = (arr) => arr[randInt(0, arr.length)];
 
-    gameState.forEach(cell => {
-        let color = 'transparent';
-        if (cell.type === 'hit') color = 'rgb(204, 7, 30)';      // Red
-        else if (cell.type === 'miss') color = 'rgb(232, 234, 236)'; // White/Gray
-        else if (cell.type === 'ship') color = 'rgb(123, 128, 131)'; // Ship Gray
+const PALETTES = {
+    redAlert: ["rgb(32, 33, 36)", "rgb(49, 49, 52)", "#cc071e", "rgb(123, 128, 131)", "rgb(66, 66, 66)"],
+    blueOps: ["rgb(32, 33, 36)", "rgb(49, 49, 52)", "rgb(91, 136, 238)", "#9a9da8", "rgb(66, 66, 66)"],
+    ghostGrey: ["rgb(32, 33, 36)", "rgb(66, 66, 66)", "rgb(123, 128, 131)", "#9a9da8", "#e8eaec"],
+    combo: ["rgb(49, 49, 52)", "rgb(32, 33, 36)", "#cc071e", "rgb(91, 136, 238)", "#9a9da8"]
+};
 
-        cellsSVG += `<rect x="${cell.x * cellSize}" y="${cell.y * cellSize}" width="${cellSize}" height="${cellSize}" fill="${color}" stroke="rgba(255,255,255,0.05)" stroke-width="0.5" />`;
-    });
-
-    // Added xmlns for Safari compatibility and minified the string for fast network transfer
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="background-color:rgb(49, 49, 52); border-radius:1.66%;">${cellsSVG}</svg>`
-        .replace(/>\s+</g, '><')
-        .trim();
+function randomBlob(width, height) {
+    const radius = rand(25, 40);
+    const cx = width / 2 + rand(-10, 10);
+    const cy = height / 2 + rand(-10, 10);
+    const points = [];
+    const n = randInt(6, 12);
+    for (let i = 0; i < n; i++) {
+        const angle = (i / n) * Math.PI * 2;
+        const r = radius * (0.7 + Math.random() * 0.6);
+        points.push([cx + Math.cos(angle) * r, cy + Math.sin(angle) * r]);
+    }
+    return points.map(([x, y], i) => (i === 0 ? `M${x},${y}` : `L${x},${y}`)).join(" ") + "Z";
 }
+
+function layeredWaves(width, height, layers, palette) {
+    let svg = "";
+    for (let i = 0; i < layers; i++) {
+        const amp = rand(10, 25);
+        const y = height - (i * height) / layers + rand(-10, 10);
+        let d = `M0 ${y}`;
+        const seg = randInt(4, 8);
+        const step = width / seg;
+        for (let j = 0; j <= seg; j++) {
+            const x = j * step;
+            const waveY = y + Math.sin(j * 0.5 + Math.random()) * amp;
+            d += ` L${x} ${waveY}`;
+        }
+        d += ` L${width} ${height} L0 ${height}Z`;
+        svg += `<path d="${d}" fill="${palette[i % palette.length]}" opacity="${0.8 - i * 0.15}"/>`;
+    }
+    return svg;
+}
+
+function randomSun(width, height, palette) {
+    const color = randChoice(palette.slice(2));
+    const cx = rand(width * 0.2, width * 0.8);
+    const cy = rand(height * 0.1, height * 0.3);
+    const r = rand(8, 15);
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" opacity="0.85"/>`;
+}
+
+function gradientDef(id, palette) {
+    const c1 = palette[0];
+    const c2 = palette[1];
+    return `
+        <defs>
+          <linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${c1}" />
+            <stop offset="100%" stop-color="${c2}" />
+          </linearGradient>
+        </defs>
+    `;
+}
+
+/**
+ * Replaces the old grid generator with the new Beautiful SVG generator.
+ */
+function generateServerSideSVG() {
+    const width = 100;
+    const height = 100;
+
+    const paletteNames = Object.keys(PALETTES);
+    const randomPaletteName = randChoice(paletteNames);
+    const palette = PALETTES[randomPaletteName];
+    const style = randChoice(["waves", "blobs", "hybrid"]);
+    const bgId = "grad" + randInt(0, 9999);
+
+    // Added style rules to ensure Safari scaling and rounded corners
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid slice" style="border-radius:1.66666667%; overflow: hidden;">`;
+    svg += gradientDef(bgId, palette);
+    svg += `<rect width="${width}" height="${height}" fill="url(#${bgId})"/>`;
+
+    if (style === "waves") {
+        svg += layeredWaves(width, height, randInt(3, 5), palette.slice(1));
+        if (Math.random() > 0.5) svg += randomSun(width, height, palette);
+    } else if (style === "blobs") {
+        const count = randInt(3, 6);
+        for (let i = 0; i < count; i++) {
+            const color = palette[(i + 1) % palette.length];
+            const blob = randomBlob(width, height);
+            svg += `<path d="${blob}" fill="${color}" opacity="${0.55 - i * 0.07}"/>`;
+        }
+    } else {
+        // Hybrid
+        svg += layeredWaves(width, height, 3, palette.slice(1));
+        svg += randomSun(width, height, palette);
+        const blob = randomBlob(width, height);
+        svg += `<path d="${blob}" fill="${randChoice(palette)}" opacity="0.35"/>`;
+    }
+
+    svg += "</svg>";
+    return svg.replace(/>\s+</g, '><').trim(); // Minify for fast network transfer
+}
+// --- END OF HAIKEI AVATAR GENERATOR ---
+
 
 // =================================================
 // === END OF LOBBY LOGIC ===
 // =================================================
-
 
 let recrCode=[
 [-60,5,-62,4,-35,3,27,3,24,2],
@@ -1893,19 +1976,17 @@ setInterval(cleanupOldGames, 1000 * 60 * 5);
 
 // The main server
 const server = http.createServer((req, res) => {
-    const { query } = url.parse(req.url, true);
+    const parsedUrl = url.parse(req.url, true);
+    const { query, pathname } = parsedUrl;
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    // >>> END OF HEADER LINES <<<
 
-    // >>> ADD THIS PREFLIGHT FIX BLOCK HERE <<<
     if (req.method === 'OPTIONS') {
         res.writeHead(204);
         return res.end();
     }
-    res.setHeader('Access-Control-Allow-Origin', '*');
 
     if (req.method === 'HEAD' && req.url === '/') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -1918,21 +1999,10 @@ const server = http.createServer((req, res) => {
         // Shuffle the 1000 bots and pick 12 random ones
         const shuffled = [...allBots].sort(() => 0.5 - Math.random());
         const selectedBots = shuffled.slice(0, 12).map(bot => {
-            
-            // Create a randomized "dummy game state" for their avatar SVG
-            const dummyState = [];
-            for(let i=0; i<6; i++) {
-                const types = ['hit', 'miss', 'ship'];
-                dummyState.push({
-                    x: Math.floor(Math.random() * 10),
-                    y: Math.floor(Math.random() * 10),
-                    type: types[Math.floor(Math.random() * types.length)]
-                });
-            }
-
             return {
                 ...bot,
-                svg: generateServerSideSVG(dummyState) // Attach the Safari-proof SVG string directly
+                // Replace dummyState with our new Beautiful SVG generator
+                svg: generateServerSideSVG()
             };
         });
 
