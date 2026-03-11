@@ -1,15 +1,60 @@
 const http = require('http');
 const url = require('url');
-const {
-    randomUUID
-} = require('crypto');
+const { randomUUID } = require('crypto');
 
-
-// Add this line
 const GAME_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 // This Map will store all active game sessions
-const activeGames = new Map(); //
+const activeGames = new Map();
+
+// =================================================
+// === 1. FAKE ONLINE PLAYERS & AVATAR GENERATOR ===
+// =================================================
+
+const prefixes = ["Admiral", "Captain", "Ghost", "Iron", "Deep", "Salty", "Cold"];
+const roots = ["Hunter", "Wolf", "Gazer", "Dog", "Skipper", "Kraken", "Viper"];
+const countries = ["USA", "CAN", "UK", "IND", "GER", "JPN", "AUS", "FRA"];
+
+// Generate 1000 bots on server startup
+const allBots = [];
+for (let i = 0; i < 1000; i++) {
+    allBots.push({
+        id: `bot_${i}`,
+        username: `${prefixes[i % prefixes.length]}${roots[i % roots.length]}_${i}`,
+        country: countries[i % countries.length],
+        rank: Math.random() > 0.8 ? "Admiral" : "Captain",
+        wins: Math.floor(Math.random() * 150)
+    });
+}
+
+/**
+ * Generates a Safari-compatible SVG snapshot of a game board to be used as an avatar.
+ * Adapted from the client-side design in Homepage.html
+ */
+function generateServerSideSVG(gameState) {
+    const gridSize = 10;
+    const cellSize = 100 / gridSize;
+    let cellsSVG = '';
+
+    gameState.forEach(cell => {
+        let color = 'transparent';
+        if (cell.type === 'hit') color = 'rgb(204, 7, 30)';      // Red
+        else if (cell.type === 'miss') color = 'rgb(232, 234, 236)'; // White/Gray
+        else if (cell.type === 'ship') color = 'rgb(123, 128, 131)'; // Ship Gray
+
+        cellsSVG += `<rect x="${cell.x * cellSize}" y="${cell.y * cellSize}" width="${cellSize}" height="${cellSize}" fill="${color}" stroke="rgba(255,255,255,0.05)" stroke-width="0.5" />`;
+    });
+
+    // Added xmlns for Safari compatibility and minified the string for fast network transfer
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="background-color:rgb(49, 49, 52); border-radius:1.66%;">${cellsSVG}</svg>`
+        .replace(/>\s+</g, '><')
+        .trim();
+}
+
+// =================================================
+// === END OF LOBBY LOGIC ===
+// =================================================
+
 
 let recrCode=[
 [-60,5,-62,4,-35,3,27,3,24,2],
@@ -1518,89 +1563,29 @@ let recrCode=[
 [96,5,84,4,-71,3,-2,3,53,2]
 
 ];  //This contains the ship positions
-// --- END OF ARRAY ---
+
 // =================================================
 // === AI STRATEGY (Full Probabilistic Algorithm) ===
 // =================================================
 
-// AI Constants (from your provided file)
 const AI_CONST = {
     TYPE_EMPTY: 0,
     TYPE_MISS: 2,
     TYPE_HIT: 3,
     TYPE_SUNK: 4,
-    SHIP_SIZES: [5, 4, 3, 3, 2], // The player's fleet
-    PROB_WEIGHT: 5000, // High value to prioritize targeting
-    OPENINGS: [ // Opening book from your file
-        {
-            'x': 7,
-            'y': 3,
-            'weight': 20
-        }, {
-            'x': 6,
-            'y': 2,
-            'weight': 20
-        },
-        {
-            'x': 3,
-            'y': 7,
-            'weight': 20
-        }, {
-            'x': 2,
-            'y': 6,
-            'weight': 20
-        },
-        {
-            'x': 6,
-            'y': 6,
-            'weight': 20
-        }, {
-            'x': 3,
-            'y': 3,
-            'weight': 20
-        },
-        {
-            'x': 5,
-            'y': 5,
-            'weight': 20
-        }, {
-            'x': 4,
-            'y': 4,
-            'weight': 20
-        },
-        {
-            'x': 0,
-            'y': 8,
-            'weight': 25
-        }, {
-            'x': 1,
-            'y': 9,
-            'weight': 30
-        },
-        {
-            'x': 8,
-            'y': 0,
-            'weight': 25
-        }, {
-            'x': 9,
-            'y': 1,
-            'weight': 30
-        },
-        {
-            'x': 9,
-            'y': 9,
-            'weight': 30
-        }, {
-            'x': 0,
-            'y': 0,
-            'weight': 30
-        }
+    SHIP_SIZES: [5, 4, 3, 3, 2],
+    PROB_WEIGHT: 5000,
+    OPENINGS: [
+        { 'x': 7, 'y': 3, 'weight': 20 }, { 'x': 6, 'y': 2, 'weight': 20 },
+        { 'x': 3, 'y': 7, 'weight': 20 }, { 'x': 2, 'y': 6, 'weight': 20 },
+        { 'x': 6, 'y': 6, 'weight': 20 }, { 'x': 3, 'y': 3, 'weight': 20 },
+        { 'x': 5, 'y': 5, 'weight': 20 }, { 'x': 4, 'y': 4, 'weight': 20 },
+        { 'x': 0, 'y': 8, 'weight': 25 }, { 'x': 1, 'y': 9, 'weight': 30 },
+        { 'x': 8, 'y': 0, 'weight': 25 }, { 'x': 9, 'y': 1, 'weight': 30 },
+        { 'x': 9, 'y': 9, 'weight': 30 }, { 'x': 0, 'y': 0, 'weight': 30 }
     ]
 };
 
-/**
- * A simplified "VirtualGrid" class for the AI to store its knowledge.
- */
 class VirtualGrid {
     constructor() {
         this.cells = this.initGrid();
@@ -1614,22 +1599,18 @@ class VirtualGrid {
     }
 }
 
-/**
- * A simplified "VirtualShip" class for the AI to run calculations.
- */
 class VirtualShip {
     constructor(size, virtualGrid) {
         this.shipLength = size;
-        this.virtualGrid = virtualGrid; // Reference to the AI's grid
+        this.virtualGrid = virtualGrid;
         this.sunk = false;
         this.x = -1;
         this.y = -1;
-        this.direction = 0; // 0 = Vertical, 1 = Horizontal
+        this.direction = 0;
     }
 
-    // A fast, inlined check from your provided file
     isLegal(x, y, direction) {
-        if (direction === 0) { // Vertical
+        if (direction === 0) {
             if (x + this.shipLength > 10) return false;
             for (let i = 0; i < this.shipLength; i++) {
                 const cellType = this.virtualGrid.cells[x + i][y];
@@ -1637,7 +1618,7 @@ class VirtualShip {
                     return false;
                 }
             }
-        } else { // Horizontal
+        } else {
             if (y + this.shipLength > 10) return false;
             for (let i = 0; i < this.shipLength; i++) {
                 const cellType = this.virtualGrid.cells[x][y + i];
@@ -1658,136 +1639,88 @@ class VirtualShip {
     getAllShipCells() {
         const cells = [];
         for (let i = 0; i < this.shipLength; i++) {
-            if (this.direction === 0) { // Vertical
-                cells.push({
-                    x: this.x + i,
-                    y: this.y
-                });
-            } else { // Horizontal
-                cells.push({
-                    x: this.x,
-                    y: this.y + i
-                });
+            if (this.direction === 0) {
+                cells.push({ x: this.x + i, y: this.y });
+            } else {
+                cells.push({ x: this.x, y: this.y + i });
             }
         }
         return cells;
     }
 }
 
-/**
- * The new, smarter AI class.
- * This holds the logic for a *single* game.
- */
 class AI {
     constructor(game) {
-        this.game = game; // A reference to the parent game object
+        this.game = game;
         this.probGrid = this.initProbs();
-
-        // Run the first calculation to populate the heatmap
         this.recalculateProbs();
     }
 
-    /**
-     * Gets the AI's next guess (1-100).
-     */
     getGuess() {
         let maxProbability = -1;
-        let maxProbCoords = {
-            x: 0,
-            y: 0
-        };
+        let maxProbCoords = { x: 0, y: 0 };
 
-        // === BUG FIX (PART 1) ===
-        // The "Add opening book weights" block was REMOVED from here.
-        // It was being called multiple times by the server's do/while loop,
-        // causing opening weights to "run away" and overwrite targeting weights.
-
-        // Find the square with the highest probability
         for (let r = 0; r < 10; r++) {
             for (let c = 0; c < 10; c++) {
-                // Don't guess squares we've already hit
                 if (this.game.virtualGrid.cells[r][c] !== AI_CONST.TYPE_EMPTY) {
                     this.probGrid[r][c] = 0;
                 }
 
                 if (this.probGrid[r][c] > maxProbability) {
                     maxProbability = this.probGrid[r][c];
-                    maxProbCoords = {
-                        x: r,
-                        y: c
-                    };
+                    maxProbCoords = { x: r, y: c };
                 }
             }
         }
 
-        // Failsafe in case all probabilities are 0
         if (maxProbability <= 0) {
             let rx, ry;
             do {
                 rx = Math.floor(Math.random() * 10);
                 ry = Math.floor(Math.random() * 10);
             } while (this.game.virtualGrid.cells[rx][ry] !== AI_CONST.TYPE_EMPTY);
-            maxProbCoords = {
-                x: rx,
-                y: ry
-            };
+            maxProbCoords = { x: rx, y: ry };
         }
 
         this.game.lastAiGuess = (maxProbCoords.x * 10) + maxProbCoords.y + 1;
-        return this.game.lastAiGuess; // Convert to 1-100
+        return this.game.lastAiGuess;
     }
 
-    /**
-     * Updates the AI's internal state with the result of its last guess.
-     */
     updateState(guess, result) {
-        const guessIdx = guess - 1; // Convert to 0-99
+        const guessIdx = guess - 1;
         const x = Math.floor(guessIdx / 10);
         const y = guessIdx % 10;
 
         if (result === 'SUNK') {
-            this.game.virtualGrid.cells[x][y] = AI_CONST.TYPE_HIT; // Mark the hit
-
-            // Find which ship was sunk (based on surrounding hits)
+            this.game.virtualGrid.cells[x][y] = AI_CONST.TYPE_HIT;
             const sunkShip = this._findSunkShip(x, y);
 
             if (sunkShip) {
                 for (const cell of sunkShip.cells) {
                     this.game.virtualGrid.cells[cell.x][cell.y] = AI_CONST.TYPE_SUNK;
                 }
-                // Remove this ship size from the AI's fleet
                 const shipIndex = this.game.virtualFleet.findIndex(ship => !ship.sunk && ship.shipLength === sunkShip.size);
                 if (shipIndex > -1) {
                     this.game.virtualFleet[shipIndex].sunk = true;
                 }
             }
-
         } else if (result === 'HIT') {
             this.game.virtualGrid.cells[x][y] = AI_CONST.TYPE_HIT;
-
-        } else { // "MISS"
+        } else {
             this.game.virtualGrid.cells[x][y] = AI_CONST.TYPE_MISS;
         }
 
-        // --- THIS IS THE "NO COMPROMISE" ---
-        // Re-calculate the entire heatmap on EVERY guess, just like your file.
         this.recalculateProbs();
     }
 
-    /**
-     * Re-calculates the entire probability heatmap.
-     * This is the "expensive" function from your file.
-     */
     recalculateProbs() {
         this.resetProbs();
         let coords;
-        // Get all ships the AI thinks are still alive
         const activeFleet = this.game.virtualFleet.filter(ship => !ship.sunk);
 
         for (const ship of activeFleet) {
             for (let r = 0; r < 10; r++) {
                 for (let c = 0; c < 10; c++) {
-                    // Check Vertical
                     if (ship.isLegal(r, c, 0)) {
                         ship.create(r, c, 0);
                         coords = ship.getAllShipCells();
@@ -1801,7 +1734,6 @@ class AI {
                             }
                         }
                     }
-                    // Check Horizontal
                     if (ship.isLegal(r, c, 1)) {
                         ship.create(r, c, 1);
                         coords = ship.getAllShipCells();
@@ -1819,19 +1751,12 @@ class AI {
             }
         }
 
-        // === BUG FIX (PART 2) ===
-        // The opening book logic was MOVED here.
-        // Now it's added only ONCE per turn, after the heatmap is built.
-        // This prevents the "runaway weight" bug.
         for (const cell of AI_CONST.OPENINGS) {
             if (this.game.virtualGrid.cells[cell.x][cell.y] === AI_CONST.TYPE_EMPTY) {
                 this.probGrid[cell.x][cell.y] += cell.weight;
             }
         }
-        // === END OF FIX ===
     }
-
-    // --- Helper functions from your file ---
 
     initProbs() {
         const grid = [];
@@ -1868,37 +1793,18 @@ class AI {
         return cells;
     }
 
-    // Helper to find all connected "HIT" squares to identify a sunk ship
     _findSunkShip(x, y) {
-        const hits = [{
-            x,
-            y
-        }];
+        const hits = [{ x, y }];
         const checked = new Set([`${x},${y}`]);
-        const queue = [{
-            x,
-            y
-        }];
+        const queue = [{ x, y }];
         const vGrid = this.game.virtualGrid.cells;
 
         while (queue.length > 0) {
-            const {
-                x,
-                y
-            } = queue.shift();
-            const neighbors = [{
-                x: x - 1,
-                y
-            }, {
-                x: x + 1,
-                y
-            }, {
-                x,
-                y: y - 1
-            }, {
-                x,
-                y: y + 1
-            }];
+            const { x, y } = queue.shift();
+            const neighbors = [
+                { x: x - 1, y }, { x: x + 1, y },
+                { x, y: y - 1 }, { x, y: y + 1 }
+            ];
 
             for (const n of neighbors) {
                 const key = `${n.x},${n.y}`;
@@ -1911,24 +1817,15 @@ class AI {
                 }
             }
         }
-        // This is a simple check. A more robust check would validate against ship sizes.
         const size = hits.length;
         if (AI_CONST.SHIP_SIZES.includes(size)) {
-            return {
-                cells: hits,
-                size: size
-            };
+            return { cells: hits, size: size };
         }
-        // If no ship of this size is left, it's a "false" sink, part of a larger ship
         const remainingShips = this.game.virtualFleet.filter(s => !s.sunk);
         if (remainingShips.some(s => s.shipLength === size)) {
-            return {
-                cells: hits,
-                size: size
-            };
+            return { cells: hits, size: size };
         }
-
-        return null; // Not a recognized sunk ship
+        return null;
     }
 }
 
@@ -1936,15 +1833,12 @@ class AI {
 // === END OF AI LOGIC ===
 // ===========================================
 
-
-// --- Main Server Helper Functions ---
-
-function generateNewShipLayout() { //
+function generateNewShipLayout() {
     const randomIndex = Math.floor(Math.random() * recrCode.length);
     return [...recrCode[randomIndex]];
 }
 
-function checkHit(target, game, gameId) { //
+function checkHit(target, game, gameId) {
     target = Number(target);
     if (target < 1 || target > 100) return "INVALID TARGET";
 
@@ -1981,7 +1875,7 @@ function checkHit(target, game, gameId) { //
     return "MISS";
 }
 
-function cleanupOldGames() { //
+function cleanupOldGames() {
     const now = Date.now();
     let deletedCount = 0;
     for (const [gameId, gameState] of activeGames.entries()) {
@@ -1995,100 +1889,106 @@ function cleanupOldGames() { //
     }
 }
 
-setInterval(cleanupOldGames, 1000 * 60 * 5); //
+setInterval(cleanupOldGames, 1000 * 60 * 5);
 
-//The main server
-const server = http.createServer((req, res) => { //
-    const {
-        query
-    } = url.parse(req.url, true); //
+// The main server
+const server = http.createServer((req, res) => {
+    const { query } = url.parse(req.url, true);
 
-    res.setHeader('Access-Control-Allow-Origin', '*'); //
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // >>> END OF HEADER LINES <<<
 
-    if (req.method === 'HEAD' && req.url === '/') { //
-        res.writeHead(200, {
-            'Content-Type': 'text/plain'
-        });
+    // >>> ADD THIS PREFLIGHT FIX BLOCK HERE <<<
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        return res.end();
+    }
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    if (req.method === 'HEAD' && req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end();
         return;
     }
 
+    // === NEW ROUTE: LOBBY DATA (Homepage) ===
+    if (req.method === 'GET' && query.action === 'getLobbyData') {
+        // Shuffle the 1000 bots and pick 12 random ones
+        const shuffled = [...allBots].sort(() => 0.5 - Math.random());
+        const selectedBots = shuffled.slice(0, 12).map(bot => {
+            
+            // Create a randomized "dummy game state" for their avatar SVG
+            const dummyState = [];
+            for(let i=0; i<6; i++) {
+                const types = ['hit', 'miss', 'ship'];
+                dummyState.push({
+                    x: Math.floor(Math.random() * 10),
+                    y: Math.floor(Math.random() * 10),
+                    type: types[Math.floor(Math.random() * types.length)]
+                });
+            }
+
+            return {
+                ...bot,
+                svg: generateServerSideSVG(dummyState) // Attach the Safari-proof SVG string directly
+            };
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(selectedBots));
+        return;
+    }
+
     // === ROUTE 1: NEW GAME (User Joins) ===
-    if (req.method === 'GET' && query.action === 'newGame') { //
+    else if (req.method === 'GET' && query.action === 'newGame') {
         const gameId = randomUUID();
         const layout = generateNewShipLayout();
 
-        // Create the newGame object *first*
         const newGame = {
-            shipLayout: layout, //
-            aiGuesses: new Set(), //
-            lastActivity: Date.now(), //
-            shipHealth: [ //
-                {
-                    size: layout[1],
-                    hits: 0,
-                    isSunk: false
-                },
-                {
-                    size: layout[3],
-                    hits: 0,
-                    isSunk: false
-                },
-                {
-                    size: layout[5],
-                    hits: 0,
-                    isSunk: false
-                },
-                {
-                    size: layout[7],
-                    hits: 0,
-                    isSunk: false
-                },
-                {
-                    size: layout[9],
-                    hits: 0,
-                    isSunk: false
-                }
+            shipLayout: layout,
+            aiGuesses: new Set(),
+            lastActivity: Date.now(),
+            shipHealth: [
+                { size: layout[1], hits: 0, isSunk: false },
+                { size: layout[3], hits: 0, isSunk: false },
+                { size: layout[5], hits: 0, isSunk: false },
+                { size: layout[7], hits: 0, isSunk: false },
+                { size: layout[9], hits: 0, isSunk: false }
             ],
-            playerHits: new Set(), //
-            // AI properties
-            virtualGrid: new VirtualGrid(), // AI's knowledge of player's board
-            virtualFleet: AI_CONST.SHIP_SIZES.map(size => new VirtualShip(size, null)), // AI's list of player's ships
-            ai: null, // Will be set next
+            playerHits: new Set(),
+            virtualGrid: new VirtualGrid(),
+            virtualFleet: AI_CONST.SHIP_SIZES.map(size => new VirtualShip(size, null)),
+            ai: null,
             lastAiGuess: -1
         };
 
-        // Set the virtual grid for each ship in the fleet
         newGame.virtualFleet.forEach(ship => {
             ship.virtualGrid = newGame.virtualGrid;
         });
 
-        // Now create the AI instance and pass the game object to it
         newGame.ai = new AI(newGame);
 
-        activeGames.set(gameId, newGame); //
-        console.log(`New game started: ${gameId}. Total games: ${activeGames.size}`); //
+        activeGames.set(gameId, newGame);
+        console.log(`New game started: ${gameId}. Total games: ${activeGames.size}`);
 
-        res.writeHead(200, {
-            'Content-Type': 'text/plain'
-        }); //
-        res.end(gameId); //
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(gameId);
     }
 
     // === ROUTE 2: MAKE A GUESS ===
-    else if (req.method === 'GET' && query.target && query.gameId) { //
-        const game = activeGames.get(query.gameId); //
+    else if (req.method === 'GET' && query.target && query.gameId) {
+        const game = activeGames.get(query.gameId);
 
         if (!game) {
-            res.writeHead(404, {
-                'Content-Type': 'text/plain'
-            });
+            res.writeHead(404, { 'Content-Type': 'text/plain' });
             res.end('Error: Game not found. Your session may have expired.');
         } else {
-            game.lastActivity = Date.now(); //
+            game.lastActivity = Date.now();
 
             let aiGuessResult = 'MISS';
-            if (query.aiSunk) { //
+            if (query.aiSunk) {
                 if (query.aiSunk.startsWith('SUNK_')) {
                     aiGuessResult = 'SUNK';
                 } else if (query.aiSunk === 'HIT') {
@@ -2096,40 +1996,30 @@ const server = http.createServer((req, res) => { //
                 }
             }
 
-            // 2. Feed this result to the AI to update its internal state
-            //    (This is the "slow" step that runs on *every* request)
             if (game.lastAiGuess !== -1) {
                 game.ai.updateState(game.lastAiGuess, aiGuessResult);
             }
 
-            // 3. Check the *player's* current guess
             const playerResult = checkHit(query.target, game, query.gameId);
 
-            // 4. Get the AI's *new* smart guess from the updated heatmap
             let aiGuess;
             do {
                 aiGuess = game.ai.getGuess();
-            } while (game.aiGuesses.has(aiGuess)); // Ensure we don't guess the same square twice
+            } while (game.aiGuesses.has(aiGuess));
 
-            // 5. Add the AI's new guess to the game's "used" set
             game.aiGuesses.add(aiGuess);
 
-            // 6. Send the response
             const response = `${playerResult},${aiGuess}`;
 
-            // Game logs are removed for quiet operation
-
-            res.writeHead(200, {
-                'Content-Type': 'text/plain'
-            });
+            res.writeHead(200, { 'Content-Type': 'text/plain' });
             res.end(response);
         }
     }
 
     // === ELSE: INVALID REQUEST ===
-    else { //
+    else {
         res.writeHead(404);
-        res.end('Send a GET request with ?action=newGame or ?target=NUMBER&gameId=YOUR_ID'); //
+        res.end('Send a GET request with ?action=newGame or ?target=NUMBER&gameId=YOUR_ID');
     }
 });
 
