@@ -1,31 +1,17 @@
 const http = require('http');
 const url = require('url');
 const { randomUUID } = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const GAME_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 // This Map will store all active game sessions
 const activeGames = new Map();
 
-// =================================================
-// === 1. FAKE ONLINE PLAYERS & AVATAR GENERATOR ===
-// =================================================
-
-const prefixes = ["Admiral", "Captain", "Ghost", "Iron", "Deep", "Salty", "Cold"];
-const roots = ["Hunter", "Wolf", "Gazer", "Dog", "Skipper", "Kraken", "Viper"];
-const countries = ["USA", "CAN", "UK", "IND", "GER", "JPN", "AUS", "FRA"];
-
-// Generate 1000 players on server startup
-const allPlayers = [];
-for (let i = 0; i < 1000; i++) {
-    allPlayers.push({
-        id: `player_${i}`,
-        username: `${prefixes[i % prefixes.length]}${roots[i % roots.length]}_${i}`,
-        country: countries[i % countries.length],
-        rank: Math.random() > 0.8 ? "Admiral" : "Captain",
-        wins: Math.floor(Math.random() * 150)
-    });
-}
+// Load the 1000 unique players from our processed JSON
+const playersPath = path.join(__dirname, 'players.json');
+const allPlayers = JSON.parse(fs.readFileSync(playersPath, 'utf-8'));
 
 // --- HAIKEI AVATAR GENERATOR FUNCTIONS (Ported from Client) ---
 const rand = (min, max) => Math.random() * (max - min) + min;
