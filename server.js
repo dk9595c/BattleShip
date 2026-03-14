@@ -1898,6 +1898,71 @@ class AI {
     }
 }
 
+class HumanAI {
+    constructor(game) {
+        this.game = game;
+        this.mode = 'HUNT'; // Starts by randomly hunting
+        this.targetQueue = []; // Stores adjacent squares to try after a hit
+    }
+
+    getGuess() {
+        // 1. TARGET MODE: If we recently hit a ship, check adjacent squares
+        while (this.mode === 'TARGET' && this.targetQueue.length > 0) {
+            let nextGuess = this.targetQueue.shift();
+            // Ensure we haven't guessed this square before
+            if (!this.game.aiGuesses.has(nextGuess)) {
+                this.game.lastAiGuess = nextGuess;
+                return nextGuess;
+            }
+        }
+
+        // 2. HUNT MODE: Use a checkerboard pattern to find ships efficiently
+        this.mode = 'HUNT';
+        let validHunts = [];
+        for (let i = 1; i <= 100; i++) {
+            if (!this.game.aiGuesses.has(i)) {
+                let row = Math.floor((i - 1) / 10);
+                let col = (i - 1) % 10;
+                // Only add "black squares" of the checkerboard
+                if ((row + col) % 2 === 0) {
+                    validHunts.push(i);
+                }
+            }
+        }
+
+        // 3. FALLBACK: If checkerboard is fully guessed, pick any remaining empty square
+        if (validHunts.length === 0) {
+            for (let i = 1; i <= 100; i++) {
+                if (!this.game.aiGuesses.has(i)) validHunts.push(i);
+            }
+        }
+
+        // Pick a random square from our valid options
+        let guess = validHunts[Math.floor(Math.random() * validHunts.length)];
+        this.game.lastAiGuess = guess;
+        return guess;
+    }
+
+    updateState(guess, result) {
+        if (result === 'HIT') {
+            // We found a ship! Switch to Target Mode and queue up adjacent squares
+            this.mode = 'TARGET';
+            let row = Math.floor((guess - 1) / 10);
+            let col = (guess - 1) % 10;
+            
+            if (row > 0) this.targetQueue.push(guess - 10); // Up
+            if (row < 9) this.targetQueue.push(guess + 10); // Down
+            if (col > 0) this.targetQueue.push(guess - 1);  // Left
+            if (col < 9) this.targetQueue.push(guess + 1);  // Right
+
+        } else if (result === 'SUNK') {
+            // Ship is destroyed! Clear the queue and go back to Hunting
+            this.mode = 'HUNT';
+            this.targetQueue = [];
+        }
+    }
+}
+
 // ===========================================
 // === END OF AI LOGIC ===
 // ===========================================
@@ -2020,12 +2085,18 @@ const server = http.createServer((req, res) => {
         };
 
         newGame.virtualFleet.forEach(ship => {
-            ship.virtualGrid = newGame.virtualGrid;
-        });
+                    ship.virtualGrid = newGame.virtualGrid;
+                });
 
-        newGame.ai = new AI(newGame);
+                // Check if the client requested the human AI
+                if (query.aiType === 'human') {
+                    newGame.ai = new HumanAI(newGame);
+                } else {
+                    newGame.ai = new AI(newGame); // Default Smart AI
+                }
 
-        activeGames.set(gameId, newGame);
+                activeGames.set(gameId, newGame);
+        
         console.log(`New game started: ${gameId}. Total games: ${activeGames.size}`);
 
         res.writeHead(200, { 'Content-Type': 'text/plain' });
